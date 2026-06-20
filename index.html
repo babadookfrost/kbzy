@@ -239,49 +239,65 @@ document.getElementById('photo').onchange = function(e) {
 // === АНАЛИЗ (Hugging Face API) ===
 function analyzePhoto() {
   var s = getSettings();
-  if (!s.apiKey) { showMsg('Введи API токен Hugging Face в настройках', 'err'); return; }
+  if (!s.apiKey) { showMsg('Введи API ключ OpenRouter в настройках', 'err'); return; }
   if (!currentImageBase64) { showMsg('Выбери фото!', 'err'); return; }
 
   var btn = document.getElementById('analyzeBtn');
   btn.disabled = true;
   btn.textContent = '⏳ Анализирую...';
   document.getElementById('resultBox').innerHTML = '';
-  showMsg('Отправляю фото...', 'ok');
+  showMsg('Отправляю в OpenRouter...', 'ok');
 
-  var prompt = 'Проанализируй фото еды. Верни ТОЛЬКО JSON: {"name":"название","description":"описание и вес","kcal":число,"protein":число,"fat":число,"carbs":число}';
-
-  // Используем прокси для обхода CORS
-  var apiUrl = 'https://api-inference.huggingface.co/models/HuggingFaceM4/idefics2-8b';
-  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(apiUrl);
+  var prompt = 'Проанализируй фото еды. Определи блюдо и оцени пищевую ценность на ВСЮ порцию. Верни ТОЛЬКО JSON без пояснений: {"name":"название блюда","description":"описание и примерный вес","kcal":число,"protein":число,"fat":число,"carbs":число}. Все числа целые.';
 
   var body = JSON.stringify({
-    inputs: {
-      text: prompt,
-      image: currentImageBase64
-    },
-    parameters: {
-      max_new_tokens: 250
-    }
+    model: 'google/gemini-flash-1.5', // Бесплатная vision модель
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: prompt
+          },
+          {
+            type: 'image_url',
+            image_url: {
+              url: currentImageBase64 // Base64 напрямую
+            }
+          }
+        ]
+      }
+    ],
+    max_tokens: 300
   });
 
-  fetch(proxyUrl, {
+  fetch('https://openrouter.ai/api/v1/chat/completions', {
     method: 'POST',
-    headers: { 
+    headers: {
       'Authorization': 'Bearer ' + s.apiKey,
-      'Content-Type': 'application/json'
+      'Content-Type': 'application/json',
+      'HTTP-Referer': window.location.href,
+      'X-Title': 'КБЖУ Калькулятор'
     },
     body: body
   })
   .then(function(r) { 
-    if (!r.ok) throw new Error('API ошибка: ' + r.status);
+    if (!r.ok) {
+      if (r.status === 402) throw new Error('Недостаточно кредитов на OpenRouter');
+      if (r.status === 429) throw new Error('Превышен лимит. Подожди минуту');
+      throw new Error('API ошибка: ' + r.status);
+    }
     return r.json(); 
   })
   .then(function(data) {
-    var text = data.generated_text || '';
+    if (data.error) throw new Error(data.error.message);
+    
+    var text = data.choices[0].message.content;
     var clean = text.replace(/```json/g,'').replace(/```/g,'').trim();
     var start = clean.indexOf('{');
     var end = clean.lastIndexOf('}');
-    if (start < 0 || end < 0) throw new Error('JSON не найден');
+    if (start < 0 || end < 0) throw new Error('JSON не найден в ответе');
     clean = clean.substring(start, end + 1);
     var obj = JSON.parse(clean);
 
