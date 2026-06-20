@@ -239,38 +239,41 @@ document.getElementById('photo').onchange = function(e) {
 // === АНАЛИЗ (Hugging Face API) ===
 function analyzePhoto() {
   var s = getSettings();
-  if (!s.apiKey) { showMsg('Сначала получи API токен на Hugging Face и введи в настройках ⚙️', 'err'); return; }
+  if (!s.apiKey) { showMsg('Введи API токен Hugging Face в настройках', 'err'); return; }
   if (!currentImageBase64) { showMsg('Выбери фото!', 'err'); return; }
 
   var btn = document.getElementById('analyzeBtn');
-  btn.disabled = true;  btn.textContent = '⏳ Анализирую...';
+  btn.disabled = true;
+  btn.textContent = '⏳ Анализирую...';
   document.getElementById('resultBox').innerHTML = '';
-  showMsg('Отправляю в Hugging Face...', 'ok');
+  showMsg('Отправляю фото...', 'ok');
 
-  var prompt = 'Проанализируй фото еды. Определи блюдо и оцени пищевую ценность на ВСЮ порцию, которая видна на фото. Верни ТОЛЬКО JSON без пояснений: {"name":"название блюда","description":"описание и примерный вес порции","kcal":число,"protein":число,"fat":число,"carbs":число}. Все числа целые.';
+  var prompt = 'Проанализируй фото еды. Верни ТОЛЬКО JSON: {"name":"название","description":"описание и вес","kcal":число,"protein":число,"fat":число,"carbs":число}';
 
-  fetch('https://api-inference.huggingface.co/models/HuggingFaceM4/idefics2-8b', {
+  // Используем прокси для обхода CORS
+  var apiUrl = 'https://api-inference.huggingface.co/models/HuggingFaceM4/idefics2-8b';
+  var proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(apiUrl);
+
+  var body = JSON.stringify({
+    inputs: {
+      text: prompt,
+      image: currentImageBase64
+    },
+    parameters: {
+      max_new_tokens: 250
+    }
+  });
+
+  fetch(proxyUrl, {
     method: 'POST',
     headers: { 
       'Authorization': 'Bearer ' + s.apiKey,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      inputs: {
-        text: prompt,
-        image: currentImageBase64
-      },
-      parameters: {
-        max_new_tokens: 250
-      }
-    })
+    body: body
   })
   .then(function(r) { 
-    if (!r.ok) {
-      if (r.status === 503) throw new Error('Модель загружается. Подожди 30 сек и попробуй снова');
-      if (r.status === 401) throw new Error('Неверный API токен');
-      throw new Error('API ошибка: ' + r.status);
-    }
+    if (!r.ok) throw new Error('API ошибка: ' + r.status);
     return r.json(); 
   })
   .then(function(data) {
@@ -278,7 +281,7 @@ function analyzePhoto() {
     var clean = text.replace(/```json/g,'').replace(/```/g,'').trim();
     var start = clean.indexOf('{');
     var end = clean.lastIndexOf('}');
-    if (start < 0 || end < 0) throw new Error('JSON не найден в ответе');
+    if (start < 0 || end < 0) throw new Error('JSON не найден');
     clean = clean.substring(start, end + 1);
     var obj = JSON.parse(clean);
 
@@ -292,7 +295,8 @@ function analyzePhoto() {
       ts: Date.now()
     };
     saveEntry(entry);
-    renderResult(entry);    showMsg('Готово! ✓', 'ok');
+    renderResult(entry);
+    showMsg('Готово! ✓', 'ok');
   })
   .catch(function(err) {
     showMsg('Ошибка: ' + err.message, 'err');
@@ -302,7 +306,6 @@ function analyzePhoto() {
     btn.textContent = '🧠 Анализировать';
   });
 }
-
 function renderResult(d) {
   var html = '<div class="result"><h3>' + esc(d.name) + '</h3><p>' + esc(d.desc) + '</p><div class="macros">';
   html += '<div class="macro"><div class="l">Калории</div><div class="v kcal">' + d.kcal + '</div></div>';
